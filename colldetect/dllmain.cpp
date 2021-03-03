@@ -189,10 +189,10 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
         glb_depthMap.resize(numTet << 2);
 
         for(auto iTet = decltype(numTet){ 0 }; iTet < numTet; ++iTet){
-            auto xmm_v0 = DX::XMVectorSet(rawVertices[iTet * 12 + 0], rawVertices[iTet * 12 + 1], rawVertices[iTet * 12 + 2], 0.f);
-            auto xmm_v1 = DX::XMVectorSet(rawVertices[iTet * 12 + 3], rawVertices[iTet * 12 + 4], rawVertices[iTet * 12 + 5], 0.f);
-            auto xmm_v2 = DX::XMVectorSet(rawVertices[iTet * 12 + 6], rawVertices[iTet * 12 + 7], rawVertices[iTet * 12 + 8], 0.f);
-            auto xmm_v3 = DX::XMVectorSet(rawVertices[iTet * 12 + 9], rawVertices[iTet * 12 + 10], rawVertices[iTet * 12 + 11], 0.f);
+            auto xmm_v0 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (0 * 3) + 0], rawVertices[(iTet * 4 * 3) + (0 * 3) + 1], rawVertices[(iTet * 4 * 3) + (0 * 3) + 2], 0.f);
+            auto xmm_v1 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (1 * 3) + 0], rawVertices[(iTet * 4 * 3) + (1 * 3) + 1], rawVertices[(iTet * 4 * 3) + (1 * 3) + 2], 0.f);
+            auto xmm_v2 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (2 * 3) + 0], rawVertices[(iTet * 4 * 3) + (2 * 3) + 1], rawVertices[(iTet * 4 * 3) + (2 * 3) + 2], 0.f);
+            auto xmm_v3 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (3 * 3) + 0], rawVertices[(iTet * 4 * 3) + (3 * 3) + 1], rawVertices[(iTet * 4 * 3) + (3 * 3) + 2], 0.f);
 
             auto* pDepthMap0 = &glb_depthMap[iTet * 4 + 0];
             auto* pDepthMap1 = &glb_depthMap[iTet * 4 + 1];
