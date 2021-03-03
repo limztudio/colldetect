@@ -84,6 +84,8 @@ static void __vectorcall lcl_fillDepthFaceInfo(DX::XMVECTOR xmm_origin, DX::XMVE
 
     if(fOut < -9000.f)
         (*pDepth) = (unsigned char)(0xff);
+    else if(fOut < 0.0001f)
+        (*pDepth) = (unsigned char)(0x00);
     else{
         auto xmms_out = DX::XMVectorReplicate(fOut);
         xmms_out = DX::XMVectorDivide(xmms_out, xmms_dist);
