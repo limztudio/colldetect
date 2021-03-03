@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.1340
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "colldetect", "colldetect\colldetect.vcxproj", "{340A4509-8EDD-458E-82E5-B85D26CC4A60}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "loader", "loader\loader.vcxproj", "{7DA768CC-C485-4E49-8A28-3FE0C63914AB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{340A4509-8EDD-458E-82E5-B85D26CC4A60}.Debug|x64.ActiveCfg = Debug|x64
+		{340A4509-8EDD-458E-82E5-B85D26CC4A60}.Debug|x64.Build.0 = Debug|x64
+		{340A4509-8EDD-458E-82E5-B85D26CC4A60}.Release|x64.ActiveCfg = Release|x64
+		{340A4509-8EDD-458E-82E5-B85D26CC4A60}.Release|x64.Build.0 = Release|x64
+		{7DA768CC-C485-4E49-8A28-3FE0C63914AB}.Debug|x64.ActiveCfg = Debug|x64
+		{7DA768CC-C485-4E49-8A28-3FE0C63914AB}.Debug|x64.Build.0 = Debug|x64
+		{7DA768CC-C485-4E49-8A28-3FE0C63914AB}.Release|x64.ActiveCfg = Release|x64
+		{7DA768CC-C485-4E49-8A28-3FE0C63914AB}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {37ACAFF8-B365-4F07-BDBE-A816B00E2BBB}
+	EndGlobalSection
+EndGlobal
