@@ -3,52 +3,101 @@
 #include <windows.h>
 
 
-typedef bool(_cdecl*_TGBuildTets)(float* vertices, unsigned long numVert);
+typedef void(_cdecl*_CDReserveColliderTable)(unsigned long numColl);
+typedef bool(_cdecl*_CDAddCollider)(float* vertices, unsigned long numVert);
 
-typedef unsigned long(_cdecl*_TGGetTetCount)(void);
-
-typedef void(_cdecl*_TGGetTetVertices)(float* vOut);
-typedef void(_cdecl*_TGGetTetIntraIndices)(unsigned long* vOut);
-typedef void(_cdecl*_TGGetTetAjacentIndices)(unsigned long* vOut);
-typedef void(_cdecl*_TGGetTetBaryMatrices)(float* vOut);
+typedef void(_cdecl*_CDFillDepthInfo)(const float* rawVertices, unsigned char* rawDepthMap, unsigned long numTet);
 
 
-struct uint4{
-    unsigned long raw[4];
+union float3{
+    struct{
+        float x, y, z;
+    };
+    float raw[3];
 };
+union float33{
+    struct{
+        float3 _0, _1, _2;
+    };
+    float3 raw[3];
+};
+union float43{
+    struct{
+        float3 _0, _1, _2, _3;
+    };
+    float3 raw[4];
+};
+
+#pragma pack(push, 1)
+union byte15{
+    struct{
+        unsigned char _00, _01, _02, _03, _04;
+        unsigned char _05, _06, _07, _08;
+        unsigned char _09, _10, _11;
+        unsigned char _12, _13;
+        unsigned char _14;
+    };
+    unsigned char raw[15];
+};
+#pragma pack(pop)
+
+
+static inline float3 _float3(float _x, float _y, float _z){
+    float3 o = { _x, _y, _z };
+    return o;
+}
+static inline float33 _float33(float3 _0, float3 _1, float3 _2){
+    float33 o = { _0, _1, _2 };
+    return o;
+}
+static inline float43 _float43(float3 _0, float3 _1, float3 _2, float3 _3){
+    float43 o = { _0, _1, _2, _3 };
+    return o;
+}
 
 
 int main(){
 #if defined(_M_X64) || defined(__amd64__)
-    HMODULE pLibrary = LoadLibrary("tetgen_x64.dll");
+    HMODULE pLibrary = LoadLibrary("colldetect_x64.dll");
 #else
-    HMODULE pLibrary = LoadLibrary("tetgen_Win32.dll");
+    HMODULE pLibrary = LoadLibrary("colldetect_Win32.dll");
 #endif
 
-    _TGBuildTets TGBuildTets = reinterpret_cast<_TGBuildTets>(GetProcAddress(pLibrary, "TGBuildTets"));
-    _TGGetTetCount TGGetTetCount = reinterpret_cast<_TGGetTetCount>(GetProcAddress(pLibrary, "TGGetTetCount"));
-    _TGGetTetVertices TGGetTetVertices = reinterpret_cast<_TGGetTetVertices>(GetProcAddress(pLibrary, "TGGetTetVertices"));
-    _TGGetTetIntraIndices TGGetTetIntraIndices = reinterpret_cast<_TGGetTetIntraIndices>(GetProcAddress(pLibrary, "TGGetTetIntraIndices"));
-    _TGGetTetAjacentIndices TGGetTetAjacentIndices = reinterpret_cast<_TGGetTetAjacentIndices>(GetProcAddress(pLibrary, "TGGetTetAjacentIndices"));
-    _TGGetTetBaryMatrices TGGetTetBaryMatrices = reinterpret_cast<_TGGetTetBaryMatrices>(GetProcAddress(pLibrary, "TGGetTetBaryMatrices"));
+    _CDReserveColliderTable CDReserveColliderTable = reinterpret_cast<_CDReserveColliderTable>(GetProcAddress(pLibrary, "CDReserveColliderTable"));
+    _CDAddCollider CDAddCollider = reinterpret_cast<_CDAddCollider>(GetProcAddress(pLibrary, "CDAddCollider"));
+    _CDFillDepthInfo CDFillDepthInfo = reinterpret_cast<_CDFillDepthInfo>(GetProcAddress(pLibrary, "CDFillDepthInfo"));
 
-    //float vertices[] = {
-    //    0, 0, 0,
-    //    1, 0, 0,
-    //    0, 0, 1,
-    //    1, 0, 1,
 
-    //    0, 1, 0,
-    //    1, 1, 0,
-    //    0, 1, 1,
-    //    1, 1, 1,
-    //};
-    //float vertices[] = {-80, 20, -80, -40, 20, -80, 0, 20, -80, 40, 20, -80, 80, 20, -80, -80, 60, -80, -40, 60, -80, 0, 60, -80, 40, 60, -80, 80, 60, -80, -80, 100, -80, -40, 100, -80, 0, 100, -80, 40, 100, -80, 80, 100, -80, -80, 140, -80, -40, 140, -80, 0, 140, -80, 40, 140, -80, 80, 140, -80, -80, 180, -80, -40, 180, -80, 0, 180, -80, 40, 180, -80, 80, 180, -80, -80, 20, -40, -40, 20, -40, 0, 20, -40, 40, 20, -40, 80, 20, -40, -80, 60, -40, -40, 60, -40, 0, 60, -40, 40, 60, -40, 80, 60, -40, -80, 100, -40, -40, 100, -40, 0, 100, -40, 40, 100, -40, 80, 100, -40, -80, 140, -40, -40, 140, -40, 0, 140, -40, 40, 140, -40, 80, 140, -40, -80, 180, -40, -40, 180, -40, 0, 180, -40, 40, 180, -40, 80, 180, -40, -80, 20, 0, -40, 20, 0, 0, 20, 0, 40, 20, 0, 80, 20, 0, -80, 60, 0, -40, 60, 0, 0, 60, 0, 40, 60, 0, 80, 60, 0, -80, 100, 0, -40, 100, 0, 0, 100, 0, 40, 100, 0, 80, 100, 0, -80, 140, 0, -40, 140, 0, 0, 140, 0, 40, 140, 0, 80, 140, 0, -80, 180, 0, -40, 180, 0, 0, 180, 0, 40, 180, 0, 80, 180, 0, -80, 20, 40, -40, 20, 40, 0, 20, 40, 40, 20, 40, 80, 20, 40, -80, 60, 40, -40, 60, 40, 0, 60, 40, 40, 60, 40, 80, 60, 40, -80, 100, 40, -40, 100, 40, 0, 100, 40, 40, 100, 40, 80, 100, 40, -80, 140, 40, -40, 140, 40, 0, 140, 40, 40, 140, 40, 80, 140, 40, -80, 180, 40, -40, 180, 40, 0, 180, 40, 40, 180, 40, 80, 180, 40, -80, 20, 80, -40, 20, 80, 0, 20, 80, 40, 20, 80, 80, 20, 80, -80, 60, 80, -40, 60, 80, 0, 60, 80, 40, 60, 80, 80, 60, 80, -80, 100, 80, -40, 100, 80, 0, 100, 80, 40, 100, 80, 80, 100, 80, -80, 140, 80, -40, 140, 80, 0, 140, 80, 40, 140, 80, 80, 140, 80, -80, 180, 80, -40, 180, 80, 0, 180, 80, 40, 180, 80, 80, 180, 80, };
-    float vertices[] = { -26.09519, -1.530641, -26.1999, 26.09519, -1.530641, -26.1999, -26.09519, 13.33064, -26.1999, -26.09519, -1.530641, 26.1999, -26.09519, 13.33064, 26.1999, 26.09519, -1.530641, 26.1999, 26.09519, 13.33064, -26.1999, 26.09519, 13.33064, 26.1999 };
-    TGBuildTets(vertices, _countof(vertices));
+    float33 cols[] = {
+        _float33(
+            _float3(25.f, 1.f, -22.f),
+            _float3(25.f, 1.f, 22.f),
+            _float3(-25.f, 1.f, -22.f)
+        ),
+    };
 
-    std::vector<uint4> indices(TGGetTetCount() << 2);
-    TGGetTetAjacentIndices((unsigned long*)indices.data());
+    float43 tets[] = {
+        _float43(
+            _float3(-26.09519f, -1.530641f, -26.1999f),
+            _float3(26.09519f, -1.530641f, -26.1999f),
+            _float3(-26.09519f, 13.33064f, -26.1999f),
+            _float3(-26.09519f, -1.530641f, 26.1999f)
+        ),
+        _float43(
+            _float3(-26.09519f, 13.33064f, 26.1999f),
+            _float3(26.09519f, -1.530641f, 26.1999f),
+            _float3(26.09519f, 13.33064f, -26.1999f),
+            _float3(26.09519f, 13.33064f, 26.1999f)
+        ),
+    };
+    byte15 depthMap[_countof(tets) << 2];
+
+    {
+        CDReserveColliderTable(1);
+        CDAddCollider((float*)cols, _countof(cols) * 3 * 3);
+
+        CDFillDepthInfo((const float*)tets, (unsigned char*)depthMap, _countof(tets));
+    }
 
     FreeLibrary(pLibrary);
     return 0;

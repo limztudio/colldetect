@@ -49,6 +49,7 @@ static const size_t glb_depthIndexTable[] = {
 static tbb::task_group glb_worker;
 
 static std::vector<Collider> glb_colliders;
+static std::vector<DepthMap> glb_depthMap;
 
 
 static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_normal){
@@ -82,7 +83,7 @@ static void __vectorcall lcl_fillDepthFaceInfo(DX::XMVECTOR xmm_origin, DX::XMVE
     float fOut = lcl_intersect(xmm_origin, xmm_normal);
 
     if(fOut < -9000.f)
-        (*pDepth) = 0xff;
+        (*pDepth) = (unsigned char)(0xff);
     else{
         auto xmms_out = DX::XMVectorReplicate(fOut);
         xmms_out = DX::XMVectorDivide(xmms_out, xmms_dist);
@@ -184,7 +185,8 @@ extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsi
 extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVertices, unsigned char* rawDepthMap, unsigned long numTet){
     glb_worker.wait();
     {
-        auto* depthMap = (DepthMap*)rawDepthMap;
+        glb_depthMap.clear();
+        glb_depthMap.resize(numTet << 2);
 
         for(auto iTet = decltype(numTet){ 0 }; iTet < numTet; ++iTet){
             auto xmm_v0 = DX::XMVectorSet(rawVertices[iTet * 12 + 0], rawVertices[iTet * 12 + 1], rawVertices[iTet * 12 + 2], 0.f);
@@ -192,10 +194,10 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
             auto xmm_v2 = DX::XMVectorSet(rawVertices[iTet * 12 + 6], rawVertices[iTet * 12 + 7], rawVertices[iTet * 12 + 8], 0.f);
             auto xmm_v3 = DX::XMVectorSet(rawVertices[iTet * 12 + 9], rawVertices[iTet * 12 + 10], rawVertices[iTet * 12 + 11], 0.f);
 
-            auto* pDepthMap0 = &depthMap[iTet * 4 + 0];
-            auto* pDepthMap1 = &depthMap[iTet * 4 + 1];
-            auto* pDepthMap2 = &depthMap[iTet * 4 + 2];
-            auto* pDepthMap3 = &depthMap[iTet * 4 + 3];
+            auto* pDepthMap0 = &glb_depthMap[iTet * 4 + 0];
+            auto* pDepthMap1 = &glb_depthMap[iTet * 4 + 1];
+            auto* pDepthMap2 = &glb_depthMap[iTet * 4 + 2];
+            auto* pDepthMap3 = &glb_depthMap[iTet * 4 + 3];
 
             { // 0 -> 1, 2, 3
                 lcl_fillDepthTriInfo(xmm_v0, xmm_v1, xmm_v2, xmm_v3, pDepthMap0);
@@ -212,6 +214,8 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
         }
     }
     glb_worker.wait();
+
+    CopyMemory(rawDepthMap, glb_depthMap.data(), glb_depthMap.size() * sizeof(DepthMap));
 }
 
 
