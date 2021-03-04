@@ -77,21 +77,32 @@ static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xm
 }
 
 static void __vectorcall lcl_fillDepthFaceInfo(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_normal, DX::XMVECTOR xmms_dist, unsigned char* pDepth){
+    static const DX::XMVECTORF32 xmmvar_pass = { { { -9000.f, -9000.f, -9000.f, -9000.f } } };
+    static const DX::XMVECTORF32 xmmvar_small = { { { -0.0001f, -0.0001f, -0.0001f, -0.0001f } } };
     static const DX::XMVECTORF32 xmmvar_255 = { { { 255.f, 255.f, 255.f, 255.f } } };
 
 
-    float fOut = lcl_intersect(xmm_origin, xmm_normal);
+    auto fOut = lcl_intersect(xmm_origin, xmm_normal);
+    auto xmms_out = DX::XMVectorReplicate(fOut);
 
-    if(fOut < -9000.f)
+    if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_pass)) & 0x01) == 1)
         (*pDepth) = (unsigned char)(0xff);
-    else if(fOut < 0.0001f)
+    else if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_small)) & 0x01) == 1)
         (*pDepth) = (unsigned char)(0x00);
+    else if((_mm_movemask_ps(DX::XMVectorGreaterOrEqual(DX::XMVectorSubtract(xmms_out, xmms_dist), xmmvar_small)) & 0x01) == 1)
+        (*pDepth) = (unsigned char)(0xff);
     else{
         auto xmms_out = DX::XMVectorReplicate(fOut);
         xmms_out = DX::XMVectorDivide(xmms_out, xmms_dist);
         xmms_out = DX::XMVectorMultiply(xmms_out, xmmvar_255);
-        xmms_out = DX::XMVectorClamp(xmms_out, DX::g_XMZero, xmmvar_255);
-        (*pDepth) = (unsigned char)(DX::XMVectorGetX(xmms_out));
+
+        auto iOut = (int)(DX::XMVectorGetX(xmms_out));
+        if(iOut < 0)
+            iOut = 0;
+        if(iOut > 255)
+            iOut = 255;
+
+        (*pDepth) = (unsigned char)(iOut);
     }
 }
 static void __vectorcall lcl_fillDepthTriInfo(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_v0, DX::XMVECTOR xmm_v1, DX::XMVECTOR xmm_v2, DepthMap* pDepthMap){
