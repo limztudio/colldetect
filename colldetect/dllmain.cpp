@@ -76,24 +76,27 @@ static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xm
     return bIntersected ? fDist : -FLT_MAX;
 }
 
-static void __vectorcall lcl_fillDepthFaceInfo(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_normal, DX::XMVECTOR xmms_dist, unsigned char* pDepth){
+static void lcl_fillDepthFaceInfo(DX::XMFLOAT3 flt3_origin, DX::XMFLOAT3 flt3_normal, float fMaxDist, unsigned char* pDepth){
     static const DX::XMVECTORF32 xmmvar_pass = { { { -9000.f, -9000.f, -9000.f, -9000.f } } };
     static const DX::XMVECTORF32 xmmvar_small = { { { -0.0001f, -0.0001f, -0.0001f, -0.0001f } } };
     static const DX::XMVECTORF32 xmmvar_255 = { { { 255.f, 255.f, 255.f, 255.f } } };
 
+    auto xmm_origin = DX::XMLoadFloat3(&flt3_origin);
+    auto xmm_normal = DX::XMLoadFloat3(&flt3_normal);
 
     auto fOut = lcl_intersect(xmm_origin, xmm_normal);
     auto xmms_out = DX::XMVectorReplicate(fOut);
+    auto xmms_maxDist = DX::XMVectorReplicate(fMaxDist);
 
     if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_pass)) & 0x01) == 1)
         (*pDepth) = (unsigned char)(0xff);
     else if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_small)) & 0x01) == 1)
         (*pDepth) = (unsigned char)(0x00);
-    else if((_mm_movemask_ps(DX::XMVectorGreaterOrEqual(DX::XMVectorSubtract(xmms_out, xmms_dist), xmmvar_small)) & 0x01) == 1)
+    else if((_mm_movemask_ps(DX::XMVectorGreaterOrEqual(DX::XMVectorSubtract(xmms_out, xmms_maxDist), xmmvar_small)) & 0x01) == 1)
         (*pDepth) = (unsigned char)(0xff);
     else{
         auto xmms_out = DX::XMVectorReplicate(fOut);
-        xmms_out = DX::XMVectorDivide(xmms_out, xmms_dist);
+        xmms_out = DX::XMVectorDivide(xmms_out, xmms_maxDist);
         xmms_out = DX::XMVectorMultiply(xmms_out, xmmvar_255);
 
         auto iOut = (int)(DX::XMVectorGetX(xmms_out));
@@ -122,6 +125,9 @@ static void __vectorcall lcl_fillDepthTriInfo(DX::XMVECTOR xmm_origin, DX::XMVEC
     //  v2
     // (0,1)
 
+    DX::XMFLOAT3 flt3_origin;
+    DX::XMStoreFloat3(&flt3_origin, xmm_origin);
+
     unsigned iID = 0;
 
     for(unsigned i = 0; i <= 4; ++i){
@@ -134,14 +140,21 @@ static void __vectorcall lcl_fillDepthTriInfo(DX::XMVECTOR xmm_origin, DX::XMVEC
             auto xmm_target = DX::XMVectorLerpV(xmm_p, xmm_q, xmm_j);
             auto xmm_diff = DX::XMVectorSubtract(xmm_target, xmm_origin);
             auto xmms_lenSq = DX::XMVector3LengthSq(xmm_diff);
-            auto xmms_len = DX::XMVectorSqrt(xmms_lenSq);
-            auto xmm_normal = DX::XMVectorDivide(xmm_diff, xmms_len);
 
             auto* pDepth = &pDepthMap->raw[glb_depthIndexTable[iID++]];
             if((_mm_movemask_ps(DX::XMVectorLess(xmms_lenSq, xmmvar_small)) & 0x01) == 1)
                 (*pDepth) = 0x00;
-            else
-                glb_worker.run([=](){ lcl_fillDepthFaceInfo(xmm_target, xmm_normal, xmms_len, pDepth); });
+            else{
+                auto xmms_len = DX::XMVectorSqrt(xmms_lenSq);
+                auto xmm_normal = DX::XMVectorDivide(xmm_diff, xmms_len);
+
+                auto fLen = DX::XMVectorGetX(xmms_len);
+
+                DX::XMFLOAT3 flt3_normal;
+                DX::XMStoreFloat3(&flt3_normal, xmm_normal);
+
+                glb_worker.run([=](){ lcl_fillDepthFaceInfo(flt3_origin, flt3_normal, fLen, pDepth); });
+            }
         }
     }
 }
