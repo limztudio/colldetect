@@ -6,7 +6,7 @@
 typedef void(_cdecl*_CDReserveColliderTable)(unsigned long numColl);
 typedef bool(_cdecl*_CDAddCollider)(float* vertices, unsigned long numVert);
 
-typedef void(_cdecl*_CDFillDepthInfo)(const float* rawVertices, unsigned char* rawDepthMap, unsigned long numTet);
+typedef void(_cdecl*_CDFillDepthInfo)(const float* rawVertices, unsigned char* rawDepthMap, unsigned char* rawOccludeMap, unsigned long numTet);
 
 
 union float3{
@@ -100,13 +100,14 @@ int main(){
     ),
     };
     byte15 depthMap[_countof(tets) << 2];
+    byte occludeMap[_countof(tets)];
 
     {
         CDReserveColliderTable(1);
         //CDAddCollider((float*)cols, _countof(cols) * 3 * 3);
         CDAddCollider(cols, _countof(cols));
 
-        CDFillDepthInfo((const float*)tets, (unsigned char*)depthMap, _countof(tets));
+        CDFillDepthInfo((const float*)tets, (unsigned char*)depthMap, occludeMap, _countof(tets));
     }
 
     FreeLibrary(pLibrary);

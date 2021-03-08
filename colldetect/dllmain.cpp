@@ -24,6 +24,12 @@ union DepthMap{
     };
     unsigned char raw[15];
 };
+union DepthMapList{
+    struct{
+        DepthMap _0, _1, _2, _3;
+    };
+    DepthMap raw[4];
+};
 #pragma pack(pop)
 
 union alignas(16) Triangle{
@@ -49,7 +55,8 @@ static const size_t glb_depthIndexTable[] = {
 static tbb::task_group glb_worker;
 
 static std::vector<Collider> glb_colliders;
-static std::vector<DepthMap> glb_depthMap;
+static std::vector<DepthMapList> glb_depthMapList;
+static std::vector<unsigned char> glb_occludeMap;
 
 
 static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_normal){
@@ -168,12 +175,16 @@ static void __vectorcall lcl_fillDepthTriInfo(DX::XMVECTOR xmm_origin, DX::XMVEC
 
 
 extern "C" __declspec(dllexport) void _cdecl CDReserveColliderTable(unsigned long numColl){
+    glb_worker.wait();
+
     glb_colliders.clear();
     glb_colliders.reserve(numColl);
 }
 extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsigned long numVert){
     if(numVert % 9)
         return false;
+
+    glb_worker.wait();
 
     auto xmm_min = DX::XMVectorReplicate(FLT_MAX);
     auto xmm_max = DX::XMVectorReplicate(-FLT_MAX);
@@ -215,11 +226,12 @@ extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsi
     return true;
 }
 
-extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVertices, unsigned char* rawDepthMap, unsigned long numTet){
+extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVertices, unsigned char* rawDepthMap, unsigned char* rawOccludeMap, unsigned long numTet){
     glb_worker.wait();
+
     {
-        glb_depthMap.clear();
-        glb_depthMap.resize(numTet << 2);
+        glb_depthMapList.clear();
+        glb_depthMapList.resize(numTet);
 
         for(auto iTet = decltype(numTet){ 0 }; iTet < numTet; ++iTet){
             auto xmm_v0 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (0 * 3) + 0], rawVertices[(iTet * 4 * 3) + (0 * 3) + 1], rawVertices[(iTet * 4 * 3) + (0 * 3) + 2], 0.f);
@@ -227,10 +239,10 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
             auto xmm_v2 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (2 * 3) + 0], rawVertices[(iTet * 4 * 3) + (2 * 3) + 1], rawVertices[(iTet * 4 * 3) + (2 * 3) + 2], 0.f);
             auto xmm_v3 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (3 * 3) + 0], rawVertices[(iTet * 4 * 3) + (3 * 3) + 1], rawVertices[(iTet * 4 * 3) + (3 * 3) + 2], 0.f);
 
-            auto* pDepthMap0 = &glb_depthMap[iTet * 4 + 0];
-            auto* pDepthMap1 = &glb_depthMap[iTet * 4 + 1];
-            auto* pDepthMap2 = &glb_depthMap[iTet * 4 + 2];
-            auto* pDepthMap3 = &glb_depthMap[iTet * 4 + 3];
+            auto* pDepthMap0 = &glb_depthMapList[iTet]._0;
+            auto* pDepthMap1 = &glb_depthMapList[iTet]._1;
+            auto* pDepthMap2 = &glb_depthMapList[iTet]._2;
+            auto* pDepthMap3 = &glb_depthMapList[iTet]._3;
 
             { // 0 -> 1, 2, 3
                 lcl_fillDepthTriInfo(xmm_v0, xmm_v1, xmm_v2, xmm_v3, pDepthMap0);
@@ -246,9 +258,62 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
             }
         }
     }
-    glb_worker.wait();
 
-    CopyMemory(rawDepthMap, glb_depthMap.data(), glb_depthMap.size() * sizeof(DepthMap));
+    glb_worker.wait();
+    CopyMemory(rawDepthMap, glb_depthMapList.data(), glb_depthMapList.size() * sizeof(DepthMapList));
+
+    { // assume that at least two of faces are completely occluded, this tetrahedron have to be subdivided.
+        glb_occludeMap.clear();
+        glb_occludeMap.resize(numTet, 0x00);
+
+        tbb::parallel_for(size_t(0u), size_t(numTet), [](size_t iTet){
+            size_t uCount = 0u;
+            unsigned char cMax;
+
+            {
+                cMax = glb_depthMapList[iTet]._0._00;
+                for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
+                    cMax = std::max(cMax, glb_depthMapList[iTet]._0.raw[i]);
+            }
+            if(cMax >= 0xff)
+                ++uCount;
+
+            {
+                cMax = glb_depthMapList[iTet]._1._00;
+                for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
+                    cMax = std::max(cMax, glb_depthMapList[iTet]._1.raw[i]);
+            }
+            if(cMax >= 0xff)
+                ++uCount;
+
+            {
+                cMax = glb_depthMapList[iTet]._2._00;
+                for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
+                    cMax = std::max(cMax, glb_depthMapList[iTet]._2.raw[i]);
+            }
+            if(cMax >= 0xff)
+                ++uCount;
+            if(uCount >= 3){
+                glb_occludeMap[iTet] = 0x00;
+                return;
+            }
+
+            {
+                cMax = glb_depthMapList[iTet]._3._00;
+                for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
+                    cMax = std::max(cMax, glb_depthMapList[iTet]._3.raw[i]);
+            }
+            if(cMax >= 0xff)
+                ++uCount;
+
+            if(uCount <= 2){
+                glb_occludeMap[iTet] = 0x01;
+                return;
+            }
+            });
+    }
+
+    CopyMemory(rawOccludeMap, glb_occludeMap.data(), glb_occludeMap.size() * sizeof(unsigned char));
 }
 
 
