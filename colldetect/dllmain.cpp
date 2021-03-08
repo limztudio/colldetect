@@ -58,12 +58,19 @@ static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xm
     
     bool bIntersected = false;
 
+    DX::BoundingSphere sphere;
+    DX::XMStoreFloat3(&sphere.Center, xmm_origin);
+    sphere.Radius = 0.0001f;
+
     for(const auto& iCol : glb_colliders){
         if(iCol.aabb.Intersects(xmm_origin, xmm_normal, fOut)){
             for(const auto& iTri : iCol.triangles){
                 auto xmm_v0 = DX::XMLoadFloat3A(&iTri._0);
                 auto xmm_v1 = DX::XMLoadFloat3A(&iTri._1);
                 auto xmm_v2 = DX::XMLoadFloat3A(&iTri._2);
+
+                if(sphere.Intersects(xmm_v0, xmm_v1, xmm_v2))
+                    return 0.f;
 
                 if(DX::TriangleTests::Intersects(xmm_origin, xmm_normal, xmm_v0, xmm_v1, xmm_v2, fOut)){
                     fDist = std::min(fDist, fOut);
