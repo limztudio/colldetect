@@ -267,35 +267,38 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
         glb_occludeMap.resize(numTet, 0x00);
 
         tbb::parallel_for(size_t(0u), size_t(numTet), [](size_t iTet){
-            size_t uCount = 0u;
             unsigned char cMax;
+            unsigned char cFlag = 0x00;
+            size_t uCount = 0;
 
             {
                 cMax = glb_depthMapList[iTet]._0._00;
                 for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
                     cMax = std::max(cMax, glb_depthMapList[iTet]._0.raw[i]);
             }
-            if(cMax >= 0xff)
+            if(cMax < 0xff){
+                cFlag |= (unsigned char)(0x01u << 0u);
                 ++uCount;
+            }
 
             {
                 cMax = glb_depthMapList[iTet]._1._00;
                 for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
                     cMax = std::max(cMax, glb_depthMapList[iTet]._1.raw[i]);
             }
-            if(cMax >= 0xff)
+            if(cMax < 0xff){
+                cFlag |= (unsigned char)(0x01u << 1u);
                 ++uCount;
+            }
 
             {
                 cMax = glb_depthMapList[iTet]._2._00;
                 for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
                     cMax = std::max(cMax, glb_depthMapList[iTet]._2.raw[i]);
             }
-            if(cMax >= 0xff)
+            if(cMax < 0xff){
+                cFlag |= (unsigned char)(0x01u << 2u);
                 ++uCount;
-            if(uCount >= 3){
-                glb_occludeMap[iTet] = 0x00;
-                return;
             }
 
             {
@@ -303,13 +306,12 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
                 for(size_t i = 1; i < _countof(DepthMap::raw) - 1u; ++i)
                     cMax = std::max(cMax, glb_depthMapList[iTet]._3.raw[i]);
             }
-            if(cMax >= 0xff)
+            if(cMax < 0xff){
+                cFlag |= (unsigned char)(0x01u << 3u);
                 ++uCount;
-
-            if(uCount <= 2){
-                glb_occludeMap[iTet] = 0x01;
-                return;
             }
+
+            glb_occludeMap[iTet] = (uCount < 2) ? 0x00 : cFlag;
             });
     }
 
