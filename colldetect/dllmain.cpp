@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include <vector>
+#include <string>
 
 #define _XM_SSE4_INTRINSICS_
 #include <DirectXMath/Inc/DirectXMath.h>
@@ -9,6 +10,9 @@
 #include <combaseapi.h>
 #include <tbb/tbb.h>
 #include <tbb/task.h>
+
+#include "robin_hood.h"
+
 
 namespace DX = DirectX;
 
@@ -43,6 +47,49 @@ struct Collider{
     std::vector<Triangle, aligned_allocator<Triangle, 16>> triangles;
 };
 
+struct CacheDepthKey{
+    DX::XMFLOAT3 Point;
+    DX::XMFLOAT3 Tri0, Tri1, Tri2;
+};
+struct CacheDepthKeyHasher{
+    inline size_t operator()(const CacheDepthKey& v)const{
+        std::string str;
+        str = "X" + std::to_string(v.Point.x) + "X" + std::to_string(v.Point.y) + "X" + std::to_string(v.Point.z) + "X";
+        str += "Y" + std::to_string(v.Tri0.x) + "Y" + std::to_string(v.Tri0.y) + "Y" + std::to_string(v.Tri0.z) + "Y";
+        str += "Z" + std::to_string(v.Tri1.x) + "Z" + std::to_string(v.Tri1.y) + "Z" + std::to_string(v.Tri1.z) + "Z";
+        str += "W" + std::to_string(v.Tri2.x) + "W" + std::to_string(v.Tri2.y) + "W" + std::to_string(v.Tri2.z) + "W";
+
+        return robin_hood::hash_bytes(str.data(), sizeof(char) * str.size());
+    }
+};
+static inline bool operator==(const CacheDepthKey& lhs, const CacheDepthKey& rhs){
+    if(lhs.Point.x != rhs.Point.x)
+        return false;
+    if(lhs.Point.y != rhs.Point.y)
+        return false;
+    if(lhs.Point.z != rhs.Point.z)
+        return false;
+    if(lhs.Tri0.x != rhs.Tri0.x)
+        return false;
+    if(lhs.Tri0.y != rhs.Tri0.y)
+        return false;
+    if(lhs.Tri0.z != rhs.Tri0.z)
+        return false;
+    if(lhs.Tri1.x != rhs.Tri1.x)
+        return false;
+    if(lhs.Tri1.y != rhs.Tri1.y)
+        return false;
+    if(lhs.Tri1.z != rhs.Tri1.z)
+        return false;
+    if(lhs.Tri2.x != rhs.Tri2.x)
+        return false;
+    if(lhs.Tri2.y != rhs.Tri2.y)
+        return false;
+    if(lhs.Tri2.z != rhs.Tri2.z)
+        return false;
+    return true;
+}
+
 
 static const size_t glb_depthIndexTable[] = {
     0,
@@ -57,17 +104,18 @@ static tbb::task_group glb_worker;
 static std::vector<Collider> glb_colliders;
 static std::vector<DepthMapList> glb_depthMapList;
 static std::vector<unsigned char> glb_occludeMap;
+static robin_hood::unordered_map<CacheDepthKey, DepthMap, CacheDepthKeyHasher> glb_cachedDepthMap;
 
 
 static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_normal){
+    static const DX::XMVECTORF32 xmmvar_radius = { { { 0.0001f, 0.0001f, 0.0001f, 0.0001f } } };
+    static const DX::XMVECTORF32 xmmvar_radiusNeg = { { { -xmmvar_radius.f[0], -xmmvar_radius.f[1], -xmmvar_radius.f[2], -xmmvar_radius.f[3] } } };
+    static const DX::XMVECTORF32 xmmvar_radiusSq = { { { xmmvar_radius.f[0] * xmmvar_radius.f[0], xmmvar_radius.f[1] * xmmvar_radius.f[1], xmmvar_radius.f[2] * xmmvar_radius.f[2], xmmvar_radius.f[3] * xmmvar_radius.f[3] } } };
+
     float fDist = FLT_MAX;
     float fOut;
     
     bool bIntersected = false;
-
-    DX::BoundingSphere sphere;
-    DX::XMStoreFloat3(&sphere.Center, xmm_origin);
-    sphere.Radius = 0.0001f;
 
     for(const auto& iCol : glb_colliders){
         if(iCol.aabb.Intersects(xmm_origin, xmm_normal, fOut)){
@@ -76,8 +124,49 @@ static float __vectorcall lcl_intersect(DX::XMVECTOR xmm_origin, DX::XMVECTOR xm
                 auto xmm_v1 = DX::XMLoadFloat3A(&iTri._1);
                 auto xmm_v2 = DX::XMLoadFloat3A(&iTri._2);
 
-                if(sphere.Intersects(xmm_v0, xmm_v1, xmm_v2))
-                    return 0.f;
+                auto xmm_cross = DX::XMVector3Normalize(DX::XMVector3Cross(DX::XMVectorSubtract(xmm_v1, xmm_v0), DX::XMVectorSubtract(xmm_v2, xmm_v0)));
+
+                // check if there are any geometries located too close
+                if(!DX::XMVector3Equal(xmm_cross, DX::XMVectorZero())){
+                    // Find the nearest feature on the triangle to the sphere.
+                    auto xmms_dist = DX::XMVector3Dot(DX::XMVectorSubtract(xmm_origin, xmm_v0), xmm_cross);
+
+                    // If the center of the sphere is farther from the plane of the triangle than
+                    // the radius of the sphere, then there cannot be an intersection.
+                    auto xmms_nointer = DX::XMVectorLess(xmms_dist, xmmvar_radiusNeg);
+                    xmms_nointer = DX::XMVectorOrInt(xmms_nointer, DX::XMVectorGreater(xmms_dist, xmmvar_radius));
+
+                    // Project the center of the sphere onto the plane of the triangle.
+                    auto xmm_p = DX::XMVectorNegativeMultiplySubtract(xmm_cross, xmms_dist, xmm_origin);
+
+                    // Is it inside all the edges? If so we intersect because the distance
+                    // to the plane is less than the radius.
+                    auto xmm_inter = DX::Internal::PointOnPlaneInsideTriangle(xmm_p, xmm_v0, xmm_v1, xmm_v2);
+
+                    // Edge 0,1
+                    xmm_p = DX::Internal::PointOnLineSegmentNearestPoint(xmm_v0, xmm_v1, xmm_origin);
+
+                    // If the distance to the center of the sphere to the point is less than
+                    // the radius of the sphere then it must intersect.
+                    xmm_inter = DX::XMVectorOrInt(xmm_inter, DX::XMVectorLessOrEqual(DX::XMVector3LengthSq(DX::XMVectorSubtract(xmm_origin, xmm_p)), xmmvar_radiusSq));
+
+                    // Edge 1,2
+                    xmm_p = DX::Internal::PointOnLineSegmentNearestPoint(xmm_v1, xmm_v2, xmm_origin);
+
+                    // If the distance to the center of the sphere to the point is less than
+                    // the radius of the sphere then it must intersect.
+                    xmm_inter = DX::XMVectorOrInt(xmm_inter, DX::XMVectorLessOrEqual(DX::XMVector3LengthSq(DX::XMVectorSubtract(xmm_origin, xmm_p)), xmmvar_radiusSq));
+
+                    // Edge 2,0
+                    xmm_p = DX::Internal::PointOnLineSegmentNearestPoint(xmm_v2, xmm_v0, xmm_origin);
+
+                    // If the distance to the center of the sphere to the point is less than
+                    // the radius of the sphere then it must intersect.
+                    xmm_inter = DX::XMVectorOrInt(xmm_inter, DX::XMVectorLessOrEqual(DX::XMVector3LengthSq(DX::XMVectorSubtract(xmm_origin, xmm_p)), xmmvar_radiusSq));
+
+                    if(DX::XMVector4EqualInt(DX::XMVectorAndCInt(xmm_inter, xmms_nointer), DX::XMVectorTrueInt()))
+                        return 0.f;
+                }
 
                 if(DX::TriangleTests::Intersects(xmm_origin, xmm_normal, xmm_v0, xmm_v1, xmm_v2, fOut)){
                     fDist = std::min(fDist, fOut);
@@ -142,32 +231,43 @@ static void __vectorcall lcl_fillDepthTriInfo(DX::XMVECTOR xmm_origin, DX::XMVEC
     DX::XMFLOAT3 flt3_origin;
     DX::XMStoreFloat3(&flt3_origin, xmm_origin);
 
-    unsigned iID = 0;
+    CacheDepthKey key;
+    key.Point = flt3_origin;
+    DX::XMStoreFloat3(&key.Tri0, xmm_v0);
+    DX::XMStoreFloat3(&key.Tri1, xmm_v1);
+    DX::XMStoreFloat3(&key.Tri2, xmm_v2);
 
-    for(unsigned i = 0; i <= 4; ++i){
-        auto xmm_i = DX::XMVectorReplicate(i * 0.25f);
-        auto xmm_p = DX::XMVectorLerpV(xmm_v0, xmm_v2, xmm_i);
-        auto xmm_q = DX::XMVectorLerpV(xmm_v0, xmm_v1, xmm_i);
+    auto itFind = glb_cachedDepthMap.find(key);
+    if(itFind != glb_cachedDepthMap.cend())
+        CopyMemory(pDepthMap->raw, itFind->second.raw, sizeof(DepthMap));
+    else{
+        unsigned iID = 0;
 
-        for(unsigned j = 0; j <= i; ++j){
-            auto xmm_j = DX::XMVectorReplicate(j * 0.25f);
-            auto xmm_target = DX::XMVectorLerpV(xmm_p, xmm_q, xmm_j);
-            auto xmm_diff = DX::XMVectorSubtract(xmm_target, xmm_origin);
-            auto xmms_lenSq = DX::XMVector3LengthSq(xmm_diff);
+        for(unsigned i = 0; i <= 4; ++i){
+            auto xmm_i = DX::XMVectorReplicate(i * 0.25f);
+            auto xmm_p = DX::XMVectorLerpV(xmm_v0, xmm_v2, xmm_i);
+            auto xmm_q = DX::XMVectorLerpV(xmm_v0, xmm_v1, xmm_i);
 
-            auto* pDepth = &pDepthMap->raw[glb_depthIndexTable[iID++]];
-            if((_mm_movemask_ps(DX::XMVectorLess(xmms_lenSq, xmmvar_small)) & 0x01) == 1)
-                (*pDepth) = 0x00;
-            else{
-                auto xmms_len = DX::XMVectorSqrt(xmms_lenSq);
-                auto xmm_normal = DX::XMVectorDivide(xmm_diff, xmms_len);
+            for(unsigned j = 0; j <= i; ++j){
+                auto xmm_j = DX::XMVectorReplicate(j * 0.25f);
+                auto xmm_target = DX::XMVectorLerpV(xmm_p, xmm_q, xmm_j);
+                auto xmm_diff = DX::XMVectorSubtract(xmm_target, xmm_origin);
+                auto xmms_lenSq = DX::XMVector3LengthSq(xmm_diff);
 
-                auto fLen = DX::XMVectorGetX(xmms_len);
+                auto* pDepth = &pDepthMap->raw[glb_depthIndexTable[iID++]];
+                if((_mm_movemask_ps(DX::XMVectorLess(xmms_lenSq, xmmvar_small)) & 0x01) == 1)
+                    (*pDepth) = 0x00;
+                else{
+                    auto xmms_len = DX::XMVectorSqrt(xmms_lenSq);
+                    auto xmm_normal = DX::XMVectorDivide(xmm_diff, xmms_len);
 
-                DX::XMFLOAT3 flt3_normal;
-                DX::XMStoreFloat3(&flt3_normal, xmm_normal);
+                    auto fLen = DX::XMVectorGetX(xmms_len);
 
-                glb_worker.run([=](){ lcl_fillDepthFaceInfo(flt3_origin, flt3_normal, fLen, pDepth); });
+                    DX::XMFLOAT3 flt3_normal;
+                    DX::XMStoreFloat3(&flt3_normal, xmm_normal);
+
+                    glb_worker.run([=](){ lcl_fillDepthFaceInfo(flt3_origin, flt3_normal, fLen, pDepth); });
+                }
             }
         }
     }
@@ -179,6 +279,8 @@ extern "C" __declspec(dllexport) void _cdecl CDReserveColliderTable(unsigned lon
 
     glb_colliders.clear();
     glb_colliders.reserve(numColl);
+
+    glb_cachedDepthMap.clear();
 }
 extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsigned long numVert){
     if(numVert % 9)
@@ -223,6 +325,8 @@ extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsi
 
     glb_colliders.emplace_back(std::move(newCol));
 
+    glb_cachedDepthMap.clear();
+
     return true;
 }
 
@@ -260,6 +364,58 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
     }
 
     glb_worker.wait();
+
+    {
+        glb_cachedDepthMap.rehash(numTet << 2);
+
+        for(auto iTet = decltype(numTet){ 0 }; iTet < numTet; ++iTet){
+            DX::XMFLOAT3 flt3_v0 = { rawVertices[(iTet * 4 * 3) + (0 * 3) + 0], rawVertices[(iTet * 4 * 3) + (0 * 3) + 1], rawVertices[(iTet * 4 * 3) + (0 * 3) + 2] };
+            DX::XMFLOAT3 flt3_v1 = { rawVertices[(iTet * 4 * 3) + (1 * 3) + 0], rawVertices[(iTet * 4 * 3) + (1 * 3) + 1], rawVertices[(iTet * 4 * 3) + (1 * 3) + 2] };
+            DX::XMFLOAT3 flt3_v2 = { rawVertices[(iTet * 4 * 3) + (2 * 3) + 0], rawVertices[(iTet * 4 * 3) + (2 * 3) + 1], rawVertices[(iTet * 4 * 3) + (2 * 3) + 2] };
+            DX::XMFLOAT3 flt3_v3 = { rawVertices[(iTet * 4 * 3) + (3 * 3) + 0], rawVertices[(iTet * 4 * 3) + (3 * 3) + 1], rawVertices[(iTet * 4 * 3) + (3 * 3) + 2] };
+
+            { // 0 -> 1, 2, 3
+                CacheDepthKey key;
+
+                key.Point = flt3_v0;
+                key.Tri0 = flt3_v1;
+                key.Tri1 = flt3_v2;
+                key.Tri2 = flt3_v3;
+
+                glb_cachedDepthMap.emplace(std::move(key), glb_depthMapList[iTet]._0);
+            }
+            { // 1 -> 0, 2, 3
+                CacheDepthKey key;
+
+                key.Point = flt3_v1;
+                key.Tri0 = flt3_v0;
+                key.Tri1 = flt3_v2;
+                key.Tri2 = flt3_v3;
+
+                glb_cachedDepthMap.emplace(std::move(key), glb_depthMapList[iTet]._1);
+            }
+            { // 2 -> 0, 1, 3
+                CacheDepthKey key;
+
+                key.Point = flt3_v2;
+                key.Tri0 = flt3_v0;
+                key.Tri1 = flt3_v1;
+                key.Tri2 = flt3_v3;
+
+                glb_cachedDepthMap.emplace(std::move(key), glb_depthMapList[iTet]._2);
+            }
+            { // 3 -> 0, 1, 2
+                CacheDepthKey key;
+
+                key.Point = flt3_v3;
+                key.Tri0 = flt3_v0;
+                key.Tri1 = flt3_v1;
+                key.Tri2 = flt3_v2;
+
+                glb_cachedDepthMap.emplace(std::move(key), glb_depthMapList[iTet]._3);
+            }
+        }
+    }
     CopyMemory(rawDepthMap, glb_depthMapList.data(), glb_depthMapList.size() * sizeof(DepthMapList));
 
     { // assume that at least two of faces are completely occluded, this tetrahedron have to be subdivided.

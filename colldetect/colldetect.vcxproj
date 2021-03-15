@@ -126,6 +126,7 @@ xcopy "$(SolutionDir)lib\tbbmalloc_proxy.pdb" "$(SolutionDir)exec\$(Platform)\$(
   <ItemGroup>
     <ClInclude Include="framework.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="robin_hood.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
