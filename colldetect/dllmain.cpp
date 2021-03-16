@@ -10,6 +10,7 @@
 #include <combaseapi.h>
 #include <tbb/tbb.h>
 #include <tbb/task.h>
+#include <tbb/concurrent_unordered_map.h>
 
 #include "robin_hood.h"
 
@@ -47,13 +48,29 @@ struct Collider{
     std::vector<Triangle, aligned_allocator<Triangle, 16>> triangles;
 };
 
+struct CacheRayKey{
+    DX::XMFLOAT3 Origin;
+    DX::XMFLOAT3 Normal;
+};
 struct CacheDepthKey{
     DX::XMFLOAT3 Point;
     DX::XMFLOAT3 Tri0, Tri1, Tri2;
 };
+
+struct CacheRayKeyHasher{
+    inline size_t operator()(const CacheRayKey& v)const{
+        std::string str;
+
+        str = "X" + std::to_string(v.Origin.x) + "X" + std::to_string(v.Origin.y) + "X" + std::to_string(v.Origin.z) + "X";
+        str += "Y" + std::to_string(v.Normal.x) + "Y" + std::to_string(v.Normal.y) + "Y" + std::to_string(v.Normal.z) + "Y";
+
+        return robin_hood::hash_bytes(str.data(), sizeof(char) * str.size());
+    }
+};
 struct CacheDepthKeyHasher{
     inline size_t operator()(const CacheDepthKey& v)const{
         std::string str;
+
         str = "X" + std::to_string(v.Point.x) + "X" + std::to_string(v.Point.y) + "X" + std::to_string(v.Point.z) + "X";
         str += "Y" + std::to_string(v.Tri0.x) + "Y" + std::to_string(v.Tri0.y) + "Y" + std::to_string(v.Tri0.z) + "Y";
         str += "Z" + std::to_string(v.Tri1.x) + "Z" + std::to_string(v.Tri1.y) + "Z" + std::to_string(v.Tri1.z) + "Z";
@@ -62,6 +79,23 @@ struct CacheDepthKeyHasher{
         return robin_hood::hash_bytes(str.data(), sizeof(char) * str.size());
     }
 };
+
+static inline bool operator==(const CacheRayKey& lhs, const CacheRayKey& rhs){
+    if(lhs.Origin.x != rhs.Origin.x)
+        return false;
+    if(lhs.Origin.y != rhs.Origin.y)
+        return false;
+    if(lhs.Origin.z != rhs.Origin.z)
+        return false;
+    if(lhs.Normal.x != rhs.Normal.x)
+        return false;
+    if(lhs.Normal.y != rhs.Normal.y)
+        return false;
+    if(lhs.Normal.z != rhs.Normal.z)
+        return false;
+
+    return true;
+}
 static inline bool operator==(const CacheDepthKey& lhs, const CacheDepthKey& rhs){
     if(lhs.Point.x != rhs.Point.x)
         return false;
@@ -104,6 +138,8 @@ static tbb::task_group glb_worker;
 static std::vector<Collider> glb_colliders;
 static std::vector<DepthMapList> glb_depthMapList;
 static std::vector<unsigned char> glb_occludeMap;
+
+static tbb::concurrent_unordered_map<CacheRayKey, unsigned char, CacheRayKeyHasher> glb_cachedRays;
 static robin_hood::unordered_map<CacheDepthKey, DepthMap, CacheDepthKeyHasher> glb_cachedDepthMap;
 
 
@@ -184,31 +220,42 @@ static void lcl_fillDepthFaceInfo(DX::XMFLOAT3 flt3_origin, DX::XMFLOAT3 flt3_no
     static const DX::XMVECTORF32 xmmvar_small = { { { -0.0001f, -0.0001f, -0.0001f, -0.0001f } } };
     static const DX::XMVECTORF32 xmmvar_255 = { { { 255.f, 255.f, 255.f, 255.f } } };
 
-    auto xmm_origin = DX::XMLoadFloat3(&flt3_origin);
-    auto xmm_normal = DX::XMLoadFloat3(&flt3_normal);
+    CacheRayKey key;
+    key.Origin = flt3_origin;
+    key.Normal = flt3_normal;
 
-    auto fOut = lcl_intersect(xmm_origin, xmm_normal);
-    auto xmms_out = DX::XMVectorReplicate(fOut);
-    auto xmms_maxDist = DX::XMVectorReplicate(fMaxDist);
-
-    if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_pass)) & 0x01) == 1)
-        (*pDepth) = (unsigned char)(0xff);
-    else if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_small)) & 0x01) == 1)
-        (*pDepth) = (unsigned char)(0x00);
-    else if((_mm_movemask_ps(DX::XMVectorGreaterOrEqual(DX::XMVectorSubtract(xmms_out, xmms_maxDist), xmmvar_small)) & 0x01) == 1)
-        (*pDepth) = (unsigned char)(0xff);
+    auto itFind = glb_cachedRays.find(key);
+    if(itFind != glb_cachedRays.cend())
+        (*pDepth) = itFind->second;
     else{
+        auto xmm_origin = DX::XMLoadFloat3(&flt3_origin);
+        auto xmm_normal = DX::XMLoadFloat3(&flt3_normal);
+
+        auto fOut = lcl_intersect(xmm_origin, xmm_normal);
         auto xmms_out = DX::XMVectorReplicate(fOut);
-        xmms_out = DX::XMVectorDivide(xmms_out, xmms_maxDist);
-        xmms_out = DX::XMVectorMultiply(xmms_out, xmmvar_255);
+        auto xmms_maxDist = DX::XMVectorReplicate(fMaxDist);
 
-        auto iOut = (int)(DX::XMVectorGetX(xmms_out));
-        if(iOut < 0)
-            iOut = 0;
-        if(iOut > 255)
-            iOut = 255;
+        if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_pass)) & 0x01) == 1)
+            (*pDepth) = (unsigned char)(0xff);
+        else if((_mm_movemask_ps(DX::XMVectorLess(xmms_out, xmmvar_small)) & 0x01) == 1)
+            (*pDepth) = (unsigned char)(0x00);
+        else if((_mm_movemask_ps(DX::XMVectorGreaterOrEqual(DX::XMVectorSubtract(xmms_out, xmms_maxDist), xmmvar_small)) & 0x01) == 1)
+            (*pDepth) = (unsigned char)(0xff);
+        else{
+            auto xmms_out = DX::XMVectorReplicate(fOut);
+            xmms_out = DX::XMVectorDivide(xmms_out, xmms_maxDist);
+            xmms_out = DX::XMVectorMultiply(xmms_out, xmmvar_255);
 
-        (*pDepth) = (unsigned char)(iOut);
+            auto iOut = (int)(DX::XMVectorGetX(xmms_out));
+            if(iOut < 0)
+                iOut = 0;
+            if(iOut > 255)
+                iOut = 255;
+
+            (*pDepth) = (unsigned char)(iOut);
+        }
+
+        glb_cachedRays.emplace(std::move(key), (*pDepth));
     }
 }
 static void __vectorcall lcl_fillDepthTriInfo(DX::XMVECTOR xmm_origin, DX::XMVECTOR xmm_v0, DX::XMVECTOR xmm_v1, DX::XMVECTOR xmm_v2, DepthMap* pDepthMap){
@@ -280,6 +327,7 @@ extern "C" __declspec(dllexport) void _cdecl CDReserveColliderTable(unsigned lon
     glb_colliders.clear();
     glb_colliders.reserve(numColl);
 
+    glb_cachedRays.clear();
     glb_cachedDepthMap.clear();
 }
 extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsigned long numVert){
@@ -325,6 +373,7 @@ extern "C" __declspec(dllexport) bool _cdecl CDAddCollider(float* vertices, unsi
 
     glb_colliders.emplace_back(std::move(newCol));
 
+    glb_cachedRays.clear();
     glb_cachedDepthMap.clear();
 
     return true;
@@ -336,6 +385,8 @@ extern "C" __declspec(dllexport) void _cdecl CDFillDepthInfo(const float* rawVer
     {
         glb_depthMapList.clear();
         glb_depthMapList.resize(numTet);
+
+        glb_cachedRays.rehash((numTet * 4 * 15) << 2);
 
         for(auto iTet = decltype(numTet){ 0 }; iTet < numTet; ++iTet){
             auto xmm_v0 = DX::XMVectorSet(rawVertices[(iTet * 4 * 3) + (0 * 3) + 0], rawVertices[(iTet * 4 * 3) + (0 * 3) + 1], rawVertices[(iTet * 4 * 3) + (0 * 3) + 2], 0.f);
